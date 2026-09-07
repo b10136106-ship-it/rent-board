@@ -234,6 +234,49 @@
     background: var(--accent); color: #fff;
   }
 
+  /* 篩選面板:桌機常駐,手機收起來 */
+  .filters > summary {
+    display: none; cursor: pointer; font-weight: 500; font-size: 14px;
+    list-style: none; padding: 2px 0;
+  }
+  .filters > summary::-webkit-details-marker { display: none; }
+  .filters > summary::after { content: " ▾"; color: var(--muted); }
+  .filters[open] > summary::after { content: " ▴"; }
+
+  /* ── 手機 ── */
+  @media (max-width: 820px) {
+    .wrap { padding: 14px 12px 48px; }
+    h1 { font-size: 21px; }
+    .sub { font-size: 12.5px; line-height: 1.45; }
+    header { gap: 8px 14px; margin-bottom: 12px; align-items: center; }
+    .who { margin-left: 0; width: 100%; justify-content: space-between; }
+    .filters { position: static; gap: 13px; padding: 12px 13px; }
+    .filters > summary { display: block; }
+    .tabs {
+      flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px 12px; padding: 0 12px 2px;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 0 0 auto; padding: 7px 13px; font-size: 14px; }
+
+    .card { grid-template-columns: 1fr; gap: 0; padding: 12px 13px; row-gap: 0; }
+    .score {
+      display: flex; align-items: baseline; gap: 6px; text-align: left; margin-bottom: 2px;
+    }
+    .score .v { font-size: 19px; }
+    .score .k { font-size: 10px; }
+    .rank { margin-left: auto; }
+    .ttl { white-space: normal; font-size: 14.5px; line-height: 1.4; }
+    .specs { gap: 3px 10px; font-size: 12px; margin-top: 6px; }
+    .chips { gap: 4px; margin-top: 6px; }
+    .chip { font-size: 11px; padding: 2px 7px; }
+    .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px; }
+    .act { padding: 9px 4px; text-align: center; font-size: 13px; }
+    .noteEdit { flex-wrap: wrap; }
+    .noteEdit input { font-size: 16px; }   /* iOS 小於16px會自動放大整頁 */
+    footer { font-size: 12px; }
+  }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -256,7 +299,8 @@
   <div class="tabs" id="tabs" role="tablist"></div>
 
   <div class="layout">
-    <aside class="filters">
+    <details class="filters" id="filterBox" open>
+      <summary>篩選與排序</summary>
       <div>
         <div class="flabel">排序</div>
         <div class="seg" id="sortSeg">
@@ -299,7 +343,7 @@
         <div class="frow"><label><input type="checkbox" id="fPark"> 有車位</label></div>
       </div>
       <button class="reset" id="reset">清掉篩選</button>
-    </aside>
+    </details>
 
     <main class="list" id="list"></main>
   </div>
@@ -330,6 +374,11 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
   };
 
+  /* 手機進來先把篩選收起來,免得要滑很久才看到物件 */
+  if (window.matchMedia("(max-width: 820px)").matches) {
+    document.getElementById("filterBox").open = false;
+  }
+
   /* ── 身分(沒有登入身分可用,自己選) ── */
   const who = el("who");
   who.value = store.get("rent_who", "米哥");
@@ -339,7 +388,7 @@
 /* 公開網頁版後端:Firestore + 通關數字。不用登入,任何人有網址+通關數字就能一起標。
    FIREBASE_CONFIG / PASSCODE 由 build_board.py 從 firebase_config.json 灌進來。 */
 const FB = {"apiKey": "AIzaSyCvo5Bd41g1S49fB7G8qcND8MCZr70CuCU", "authDomain": "rent-board-5f502.firebaseapp.com", "projectId": "rent-board-5f502", "storageBucket": "rent-board-5f502.firebasestorage.app", "messagingSenderId": "767918557776", "appId": "1:767918557776:web:6725c54ecbffc774365f55"};
-const PASSCODE = "2648";
+const PASSCODE = "5201011";
 
 const Backend = {
   live: false,
