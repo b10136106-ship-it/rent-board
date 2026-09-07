@@ -249,6 +249,8 @@
     list-style: none; padding: 2px 0;
   }
   .filters > summary::-webkit-details-marker { display: none; }
+  /* details 收合時要退回 block,否則 flex 會蓋掉收合行為、內容照樣佔位 */
+  .filters:not([open]) { display: block; }
   .filters > summary::after { content: " ▾"; color: var(--muted); }
   .filters[open] > summary::after { content: " ▴"; }
 
