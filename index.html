@@ -189,6 +189,9 @@
   }
   .chip.good { background: var(--good-soft); color: var(--good); border-color: transparent; }
   .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .chip.gone { background: var(--ink); color: var(--ground); border-color: transparent; font-weight: 500; }
+  .card.is-gone { opacity: .6; }
+  .card.is-gone .ttl { text-decoration: line-through; }
   .chip.new { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 500; }
   .note {
     margin-top: 8px; font-size: 12.5px; color: var(--ink-2);
@@ -366,13 +369,14 @@
     分數 = 通勤30 ／ 屋況20 ／ 租金20 ／ 坪數10 ／ 硬體10 ／ 新鮮度10。
     通勤時間走Valhalla路徑規劃(機車、避開高速公路,已用實測校準),終點是公司。<br>
     標記兩人即時同步：<b>看過</b>降到後面、<b>不要</b>之後週報不再出現、<b>收藏</b>置頂。
-    每週一08:10自動重跑,新案會標<code>新案</code>。
+    每週一08:10自動重跑,新案會標<code>新案</code>;有收藏/看過的物件消失後仍保留8週:頁面真的404標<code>已下架</code>,還開得起來的標<code>本週沒抓到</code>;沒標記的直接消失。
   </footer>
 </div>
 
 <script type="module">
   const DATA = await fetch("data.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.json(); });   // Claude版=內嵌;公開版=每次都抓最新的 data.json
-  const HOUSES = DATA.houses;
+  const GONE = DATA.gone || [];   // 下架但8週內的物件,只在有標收藏/看過時顯示
+  const HOUSES = DATA.houses.concat(GONE);
   const NEW_IDS = new Set(DATA.new_ids || []);
   const LABEL = { fav: "收藏", seen: "看過", no: "不要" };
 
@@ -597,6 +601,7 @@ function askPass() {
   function statusOf(h) { return (marks[h.id] || {}).status || "todo"; }
 
   function pass(h) {
+    if (h.gone_date && statusOf(h) === "todo") return false;   // 下架又沒標記的不用看
     const cm = h.commute_min;
     if (cm != null && (cm < RANGE.commute.lo ||
         (RANGE.commute.hi < 60 && cm > RANGE.commute.hi))) return false;
@@ -611,7 +616,7 @@ function askPass() {
 
   function render() {
     const counts = { todo: 0, fav: 0, seen: 0, no: 0 };
-    HOUSES.forEach(function (h) { counts[statusOf(h)]++; });
+    HOUSES.forEach(function (h) { if (!(h.gone_date && statusOf(h) === "todo")) counts[statusOf(h)]++; });
     el("tabs").innerHTML = [["todo", "待看"], ["fav", "收藏"], ["seen", "看過"], ["no", "不要"]]
       .map(function (t) {
         return '<button class="tab" role="tab" data-tab="' + t[0] + '" aria-selected="' +
@@ -627,7 +632,7 @@ function askPass() {
       "<b>" + DATA.date + "</b> 更新 · " + cfg.regions.join("、") + " · " +
       cfg.budget_min.toLocaleString() + "~" + cfg.budget_max.toLocaleString() + "元 · " +
       cfg.rooms_allow.join("/") + "房 · " + cfg.area_min_ping + "坪以上 · 共 <b>" +
-      HOUSES.length + "</b> 筆";
+      DATA.houses.length + "</b> 筆";
 
     const rows = HOUSES.filter(function (h) { return statusOf(h) === tab && pass(h); })
       .sort(function (a, b) {
@@ -645,7 +650,8 @@ function askPass() {
       const cm = h.commute_min == null ? "?" : Math.round(h.commute_min) + "分";
       const cmClass = h.commute_min != null && h.commute_min <= 15 ? "good" : "";
       const chips = []
-        .concat(NEW_IDS.has(h.id) ? ['<span class="chip new">新案</span>'] : [])
+        .concat(h.gone_date ? ['<span class="chip gone">' + (h.delisted ? "已下架 " : "本週沒抓到 ") + h.gone_date.slice(5) + '</span>'] : [])
+        .concat(NEW_IDS.has(h.id) && !h.gone_date ? ['<span class="chip new">新案</span>'] : [])
         .concat(h.shape ? ['<span class="chip">' + h.shape + "</span>"] : [])
         .concat(h.decorate ? ['<span class="chip">' + h.decorate + "</span>"] : [])
         .concat((h.bonus_hit || []).slice(0, 3).map(function (b) {
@@ -665,7 +671,7 @@ function askPass() {
           : m.by
             ? '<div class="note"><b>' + m.by + "</b> 標了" + (LABEL[m.status] || "") + "</div>"
             : "";
-      return '<article class="card ' + (st === "no" ? "is-no " : "") +
+      return '<article class="card ' + (st === "no" ? "is-no " : "") + (h.gone_date ? "is-gone " : "") +
         (st === "fav" ? "is-fav" : "") + '">' +
         '<div class="score"><div class="v">' + h.score + '</div><div class="k">分</div>' +
         '<div class="rank">#' + (i + 1) + "</div></div>" +
