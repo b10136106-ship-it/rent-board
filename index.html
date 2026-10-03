@@ -222,7 +222,7 @@
   .act.del { color: var(--warn); }
   .act.del:hover { border-color: var(--warn); }
 
-  /* 收藏/不要分頁上方:一鍵清掉已下架+復原 */
+  /* 分頁上方:顯示/收起已下架+刪除後復原 */
   .bar {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
     font-size: 13px; color: var(--ink-2);
@@ -431,6 +431,7 @@
   let tab = "todo";
   let sort = "score";
   let editing = null;
+  let showGone = false;   // 已下架的卡預設收起來(只是畫面收合,不動標記——重新上架時才會沿用回來)
   let undo = null;   // 上一次刪除的 [{id, prev}],給「復原」用
   const el = (id) => document.getElementById(id);
 
@@ -728,20 +729,27 @@ function askPass() {
       DATA.houses.length + "</b> 筆" +
       (DATA.alive_checked ? " · " + DATA.alive_checked.slice(5) + " 檢查過下架" : "");
 
-    /* 收藏/不要分頁:一鍵清掉已下架 + 復原 */
-    const goneHere = HOUSES.filter(function (h) { return h.delisted && statusOf(h) === tab; });
+    /* 已下架(且沒換號重上)的卡收合起來。不提供「一鍵清掉」:清掉=標刪除,
+       會沿用到之後換號重上的新卡,收藏的房子重新上架就看不到了(2026-10-04拿掉) */
+    const folded = function (h) {
+      const nw = CURFP[fpOf(h)];
+      return !!h.gone_date && !(nw && nw.id !== h.id);
+    };
+    const goneHere = HOUSES.filter(function (h) { return statusOf(h) === tab && folded(h) && pass(h); });
     el("bar").innerHTML =
-      ((tab === "fav" || tab === "no") && goneHere.length
-        ? '<button class="danger" data-b="clear">清掉已下架的 ' + goneHere.length + " 筆</button>" : "") +
+      (goneHere.length
+        ? '<button data-b="fold">' + (showGone ? "收起" : "顯示") + "已下架的 " + goneHere.length + " 筆</button>" : "") +
       (undo ? "<span>刪除了 " + undo.length + ' 筆</span><button class="undo" data-b="undo">復原</button>' : "");
     el("bar").onclick = function (e) {
       const b = e.target.closest("button");
       if (!b) return;
-      if (b.dataset.b === "clear") del(goneHere.map(function (h) { return h.id; }));
+      if (b.dataset.b === "fold") { showGone = !showGone; render(); }
       else restore();
     };
 
-    const rows = HOUSES.filter(function (h) { return statusOf(h) === tab && pass(h); })
+    const rows = HOUSES.filter(function (h) {
+        return statusOf(h) === tab && pass(h) && (showGone || !folded(h));
+      })
       .sort(function (a, b) {
         if (sort === "commute") {
           return (a.commute_min == null ? 999 : a.commute_min) -
