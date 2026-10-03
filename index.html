@@ -397,6 +397,28 @@
   const GONE = DATA.gone || [];   // 下架但8週內的物件,只在有標收藏/看過時顯示
   const HOUSES = DATA.houses.concat(GONE);
   const NEW_IDS = new Set(DATA.new_ids || []);
+  /* 591常換新編號重新上架(實測293筆下架有19筆換號重上),標記綁編號會失效。
+     用 地址+坪數+樓層+格局 當指紋,新編號對到舊物件就沿用舊標記。 */
+  const fpOf = (h) => [h.addr, h.ping, h.floor, h.layout].join("|");
+  const BYID = {};
+  HOUSES.forEach(function (h) { BYID[h.id] = h; });
+  const GONEFP = new Set(GONE.filter(function (h) { return h.delisted; }).map(fpOf));
+  let FPMARK = {};   // 指紋 → 最近一次的標記(含原編號)
+  function indexMarks() {
+    FPMARK = {};
+    Object.keys(marks).forEach(function (k) {
+      const m = marks[k];
+      const fp = m.fp || (BYID[k] && fpOf(BYID[k]));
+      if (!fp || m.status === "todo") return;
+      if (!FPMARK[fp] || (m.at || "") >= (FPMARK[fp].at || "")) FPMARK[fp] = Object.assign({ id: k }, m);
+    });
+  }
+  /* 自己沒標記、但同指紋的另一個編號有標記 → 回傳那筆 */
+  function inherited(h) {
+    if (marks[h.id]) return null;
+    const m = FPMARK[fpOf(h)];
+    return m && m.id !== h.id ? m : null;
+  }
   const LABEL = { fav: "收藏", seen: "看過", no: "不要", del: "刪除" };
 
   let marks = {};
@@ -518,11 +540,14 @@ function askPass() {
 
   /* 文件id長 591-21952033 這樣,兩邊後端都吃得下 */
   async function mark(id, status) {
-    const cur = marks[id];
+    const h = BYID[id];
+    const inh = h ? inherited(h) : null;
+    const cur = marks[id] || inh;
+    const at = new Date().toISOString().slice(0, 10);
+    const fp = h ? fpOf(h) : null;
     const next = cur && cur.status === status
-      ? null
-      : { status: status, note: (cur && cur.note) || "", by: who.value,
-          at: new Date().toISOString().slice(0, 10) };
+      ? (inh ? { status: "todo", note: "", by: who.value, at: at, fp: fp } : null)   // 取消沿用來的標記要明確記成待看
+      : { status: status, note: (cur && cur.note) || "", by: who.value, at: at, fp: fp };
     if (next) { marks[id] = next; } else { delete marks[id]; }
     render();
     if (Backend.live) {
@@ -543,7 +568,8 @@ function askPass() {
     undo = ids.map(function (id) { return { id: id, prev: marks[id] || null }; });
     const at = new Date().toISOString().slice(0, 10);
     ids.forEach(function (id) {
-      marks[id] = { status: "del", note: (marks[id] || {}).note || "", by: who.value, at: at };
+      marks[id] = { status: "del", note: (marks[id] || {}).note || "", by: who.value, at: at,
+                    fp: BYID[id] ? fpOf(BYID[id]) : null };
     });
     render();
     for (const id of ids) { await putMark(id, marks[id]); }
@@ -560,7 +586,7 @@ function askPass() {
   async function saveNote(id, note) {
     const cur = marks[id] || {};
     const next = { status: cur.status || "seen", note: note, by: who.value,
-                   at: new Date().toISOString().slice(0, 10) };
+                   at: new Date().toISOString().slice(0, 10), fp: BYID[id] ? fpOf(BYID[id]) : null };
     marks[id] = next;
     editing = null;
     render();
@@ -644,7 +670,7 @@ function askPass() {
     render();
   };
 
-  function statusOf(h) { return (marks[h.id] || {}).status || "todo"; }
+  function statusOf(h) { return (marks[h.id] || inherited(h) || {}).status || "todo"; }
 
   function pass(h) {
     if (h.gone_date && statusOf(h) === "todo") return false;   // 下架又沒標記的不用看
@@ -662,6 +688,7 @@ function askPass() {
   }
 
   function render() {
+    indexMarks();
     const counts = { todo: 0, fav: 0, seen: 0, no: 0, del: 0 };
     HOUSES.forEach(function (h) { if (!(h.gone_date && statusOf(h) === "todo")) counts[statusOf(h)]++; });
     el("tabs").innerHTML = [["todo", "待看"], ["fav", "收藏"], ["seen", "看過"], ["no", "不要"]]
@@ -706,13 +733,17 @@ function askPass() {
       });
 
     el("list").innerHTML = rows.length ? rows.map(function (h, i) {
-      const m = marks[h.id] || {};
+      const inh = inherited(h);
+      const m = marks[h.id] || inh || {};
+      const relist = !h.gone_date && (inh || GONEFP.has(fpOf(h)));
       const st = m.status || "todo";
       const cm = h.commute_min == null ? "?" : Math.round(h.commute_min) + "分";
       const cmClass = h.commute_min != null && h.commute_min <= 15 ? "good" : "";
       const chips = []
         .concat(h.gone_date ? ['<span class="chip gone">' + (h.delisted ? "已下架 " : "本週沒抓到 ") + h.gone_date.slice(5) + '</span>'] : [])
-        .concat(NEW_IDS.has(h.id) && !h.gone_date ? ['<span class="chip new">新案</span>'] : [])
+        .concat(relist ? ['<span class="chip new" title="同地址/坪數/樓層/格局的物件之前下架過' +
+          (inh ? ",沿用當時的「" + (LABEL[inh.status] || "") + "」標記" : "") + '">重新上架</span>'] : [])
+        .concat(NEW_IDS.has(h.id) && !h.gone_date && !relist ? ['<span class="chip new">新案</span>'] : [])
         .concat(h.shape ? ['<span class="chip">' + h.shape + "</span>"] : [])
         .concat(h.decorate ? ['<span class="chip">' + h.decorate + "</span>"] : [])
         .concat((h.bonus_hit || []).slice(0, 3).map(function (b) {
