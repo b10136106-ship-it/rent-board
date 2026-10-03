@@ -215,6 +215,21 @@
   .act[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
   .act.fav[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .act.no[aria-pressed="true"] { background: var(--warn); border-color: var(--warn); color: #fff; }
+  .act.del { color: var(--warn); }
+  .act.del:hover { border-color: var(--warn); }
+
+  /* 收藏/不要分頁上方:一鍵清掉已下架+復原 */
+  .bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    font-size: 13px; color: var(--ink-2);
+  }
+  .bar:empty { display: none; }
+  .bar button {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+    border-radius: 8px; padding: 6px 11px; font-size: 12.5px;
+  }
+  .bar .danger { color: var(--warn); }
+  .bar .undo { color: var(--accent); border-color: var(--accent); }
 
   .empty { padding: 46px 20px; text-align: center; color: var(--muted); }
   footer { margin-top: 26px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
@@ -284,7 +299,7 @@
     .specs { gap: 3px 10px; font-size: 12px; margin-top: 6px; }
     .chips { gap: 4px; margin-top: 6px; }
     .chip { font-size: 11px; padding: 2px 7px; }
-    .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px; }
+    .acts { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 11px; }
     .act { padding: 9px 4px; text-align: center; font-size: 13px; }
     .noteEdit { flex-wrap: wrap; }
     .noteEdit input { font-size: 16px; }   /* iOS 小於16px會自動放大整頁 */
@@ -358,18 +373,22 @@
         <div class="frow"><label><input type="checkbox" id="fNew"> 本週新案</label></div>
         <div class="frow"><label><input type="checkbox" id="fLift"> 有電梯</label></div>
         <div class="frow"><label><input type="checkbox" id="fPark"> 有車位</label></div>
+        <div class="frow"><label><input type="checkbox" id="fPet"> 可養寵物</label></div>
       </div>
       <button class="reset" id="reset">清掉篩選</button>
     </details>
 
-    <main class="list" id="list"></main>
+    <main class="list">
+      <div class="bar" id="bar"></div>
+      <div class="list" id="list"></div>
+    </main>
   </div>
 
   <footer>
     分數 = 通勤30 ／ 屋況20 ／ 租金20 ／ 坪數10 ／ 硬體10 ／ 新鮮度10。
     通勤時間走Valhalla路徑規劃(機車、避開高速公路,已用實測校準),終點是公司。<br>
-    標記兩人即時同步：<b>看過</b>降到後面、<b>不要</b>之後週報不再出現、<b>收藏</b>置頂。
-    每週一08:10自動重跑,新案會標<code>新案</code>;有收藏/看過的物件消失後仍保留8週:頁面真的404標<code>已下架</code>,還開得起來的標<code>本週沒抓到</code>;沒標記的直接消失。
+    標記兩人即時同步：<b>看過</b>降到後面、<b>不要</b>之後週報不再出現、<b>收藏</b>置頂;收藏/不要區可以<b>刪除</b>(整個從看板消失,不會再回來)。
+    每週一08:10自動重跑,新案會標<code>新案</code>;每天18:00另外檢查一次頁面還在不在,被租走的標<code>已下架</code>;有收藏/看過的物件消失後仍保留8週:頁面真的404標<code>已下架</code>,還開得起來的標<code>本週沒抓到</code>;沒標記的直接消失。
   </footer>
 </div>
 
@@ -378,12 +397,13 @@
   const GONE = DATA.gone || [];   // 下架但8週內的物件,只在有標收藏/看過時顯示
   const HOUSES = DATA.houses.concat(GONE);
   const NEW_IDS = new Set(DATA.new_ids || []);
-  const LABEL = { fav: "收藏", seen: "看過", no: "不要" };
+  const LABEL = { fav: "收藏", seen: "看過", no: "不要", del: "刪除" };
 
   let marks = {};
   let tab = "todo";
   let sort = "score";
   let editing = null;
+  let undo = null;   // 上一次刪除的 [{id, prev}],給「復原」用
   const el = (id) => document.getElementById(id);
 
   /* localStorage 在隱私模式/縮圖擷取時連讀取都會丟例外,一律包起來 */
@@ -511,6 +531,31 @@ function askPass() {
     } else { localSave(); }
   }
 
+  /* 刪除=標成del,任何分頁都不顯示(週報也當成不要)。可一次多筆,記下原狀給復原 */
+  async function putMark(id, obj) {
+    if (obj) { marks[id] = obj; } else { delete marks[id]; }
+    if (Backend.live) {
+      try { obj ? await Backend.save(id, obj) : await Backend.remove(id); }
+      catch (e) { setSync(false, "這筆沒存上,再點一次"); }
+    } else { localSave(); }
+  }
+  async function del(ids) {
+    undo = ids.map(function (id) { return { id: id, prev: marks[id] || null }; });
+    const at = new Date().toISOString().slice(0, 10);
+    ids.forEach(function (id) {
+      marks[id] = { status: "del", note: (marks[id] || {}).note || "", by: who.value, at: at };
+    });
+    render();
+    for (const id of ids) { await putMark(id, marks[id]); }
+  }
+  async function restore() {
+    const u = undo; undo = null;
+    if (!u) return;
+    u.forEach(function (x) { if (x.prev) { marks[x.id] = x.prev; } else { delete marks[x.id]; } });
+    render();
+    for (const x of u) { await putMark(x.id, x.prev); }
+  }
+
   /* 備註用頁內輸入框(Claude的沙箱把 prompt/alert 擋掉了) */
   async function saveNote(id, note) {
     const cur = marks[id] || {};
@@ -538,7 +583,8 @@ function askPass() {
               return a === 0 && b === 100 ? "不限" : a + " ~ " + b + " 分";
             } },
   };
-  const F = { onlyNew: false, lift: false, park: false };
+  const F = { onlyNew: false, lift: false, park: false, pet: false };
+  const FCHK = { fNew: "onlyNew", fLift: "lift", fPark: "park", fPet: "pet" };
 
   const dualBox = (key) => document.querySelector('.dual[data-key="' + key + '"]');
 
@@ -570,13 +616,13 @@ function askPass() {
     paintDual(key);
   });
 
-  ["fNew", "fLift", "fPark"].forEach(function (id) {
-    const key = { fNew: "onlyNew", fLift: "lift", fPark: "park" }[id];
+  Object.keys(FCHK).forEach(function (id) {
+    const key = FCHK[id];
     el(id).onchange = function (e) { F[key] = e.target.checked; render(); };
   });
 
   el("reset").onclick = function () {
-    F.onlyNew = false; F.lift = false; F.park = false;
+    Object.keys(F).forEach(function (k) { F[k] = false; });
     Object.keys(RANGE).forEach(function (key) {
       const r = RANGE[key], box = dualBox(key);
       r.lo = r.min; r.hi = r.max;
@@ -584,7 +630,7 @@ function askPass() {
       box.querySelector(".hi").value = r.max;
       paintDual(key);
     });
-    ["fNew", "fLift", "fPark"].forEach(function (id) { el(id).checked = false; });
+    Object.keys(FCHK).forEach(function (id) { el(id).checked = false; });
     render();
   };
 
@@ -611,11 +657,12 @@ function askPass() {
     if (F.onlyNew && !NEW_IDS.has(h.id)) return false;
     if (F.lift && h.lift !== "有" && (h.bonus_hit || []).indexOf("電梯") < 0) return false;
     if (F.park && (h.bonus_hit || []).indexOf("車位") < 0) return false;
+    if (F.pet && (h.bonus_hit || []).indexOf("可養寵") < 0) return false;
     return true;
   }
 
   function render() {
-    const counts = { todo: 0, fav: 0, seen: 0, no: 0 };
+    const counts = { todo: 0, fav: 0, seen: 0, no: 0, del: 0 };
     HOUSES.forEach(function (h) { if (!(h.gone_date && statusOf(h) === "todo")) counts[statusOf(h)]++; });
     el("tabs").innerHTML = [["todo", "待看"], ["fav", "收藏"], ["seen", "看過"], ["no", "不要"]]
       .map(function (t) {
@@ -632,7 +679,21 @@ function askPass() {
       "<b>" + DATA.date + "</b> 更新 · " + cfg.regions.join("、") + " · " +
       cfg.budget_min.toLocaleString() + "~" + cfg.budget_max.toLocaleString() + "元 · " +
       cfg.rooms_allow.join("/") + "房 · " + cfg.area_min_ping + "坪以上 · 共 <b>" +
-      DATA.houses.length + "</b> 筆";
+      DATA.houses.length + "</b> 筆" +
+      (DATA.alive_checked ? " · " + DATA.alive_checked.slice(5) + " 檢查過下架" : "");
+
+    /* 收藏/不要分頁:一鍵清掉已下架 + 復原 */
+    const goneHere = HOUSES.filter(function (h) { return h.delisted && statusOf(h) === tab; });
+    el("bar").innerHTML =
+      ((tab === "fav" || tab === "no") && goneHere.length
+        ? '<button class="danger" data-b="clear">清掉已下架的 ' + goneHere.length + " 筆</button>" : "") +
+      (undo ? "<span>刪除了 " + undo.length + ' 筆</span><button class="undo" data-b="undo">復原</button>' : "");
+    el("bar").onclick = function (e) {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.b === "clear") del(goneHere.map(function (h) { return h.id; }));
+      else restore();
+    };
 
     const rows = HOUSES.filter(function (h) { return statusOf(h) === tab && pass(h); })
       .sort(function (a, b) {
@@ -694,6 +755,8 @@ function askPass() {
         '<button class="act no" data-id="' + h.id + '" data-s="no" aria-pressed="' +
         (st === "no") + '">不要</button>' +
         '<button class="act" data-id="' + h.id + '" data-s="note">備註</button>' +
+        (st === "fav" || st === "no"
+          ? '<button class="act del" data-id="' + h.id + '" data-s="del">刪除</button>' : "") +
         "</div></article>";
     }).join("") : '<div class="empty">這一區沒有符合篩選的物件。</div>';
 
@@ -703,6 +766,7 @@ function askPass() {
       const id = b.dataset.id;
       if (b.dataset.s === "note") { editing = editing === id ? null : id; render(); }
       else if (b.dataset.s === "save") { saveNote(id, el("noteInput").value.trim()); }
+      else if (b.dataset.s === "del") { del([id]); }
       else { mark(id, b.dataset.s); }
     };
 
