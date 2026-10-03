@@ -192,6 +192,10 @@
   .chip.gone { background: var(--ink); color: var(--ground); border-color: transparent; font-weight: 500; }
   .card.is-gone { opacity: .6; }
   .card.is-gone .ttl { text-decoration: line-through; }
+  .chip.relink { text-decoration: none; }
+  .chip.relink:hover { text-decoration: underline; }
+  .card.is-gone:has(.relink) { opacity: 1; }
+  .card.is-gone:has(.relink) .ttl { text-decoration: none; }
   .chip.new { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 500; }
   .note {
     margin-top: 8px; font-size: 12.5px; color: var(--ink-2);
@@ -402,6 +406,8 @@
   const fpOf = (h) => [h.addr, h.ping, h.floor, h.layout].join("|");
   const BYID = {};
   HOUSES.forEach(function (h) { BYID[h.id] = h; });
+  const CURFP = {};   // 指紋 → 目前還在架上的物件(給已下架舊卡指向新編號)
+  DATA.houses.forEach(function (h) { CURFP[fpOf(h)] = h; });
   const GONEFP = new Set(GONE.filter(function (h) { return h.delisted; }).map(fpOf));
   let FPMARK = {};   // 指紋 → 最近一次的標記(含原編號)
   function indexMarks() {
@@ -565,14 +571,27 @@ function askPass() {
     } else { localSave(); }
   }
   async function del(ids) {
-    undo = ids.map(function (id) { return { id: id, prev: marks[id] || null }; });
     const at = new Date().toISOString().slice(0, 10);
+    /* 刪已下架舊卡前,若同一間已換號重上、新編號還在沿用舊標記→先把標記轉存到新編號,
+       否則新卡會跟著沿用「刪除」一起消失 */
+    const carry = [];
+    ids.forEach(function (id) {
+      const h = BYID[id], nw = h && h.gone_date && CURFP[fpOf(h)];
+      if (nw && nw.id !== id && !marks[nw.id] && marks[id] && ids.indexOf(nw.id) < 0) {
+        carry.push(nw.id);
+      }
+    });
+    undo = ids.concat(carry).map(function (id) { return { id: id, prev: marks[id] || null }; });
+    carry.forEach(function (nid) {
+      marks[nid] = Object.assign({}, inherited(BYID[nid]), { fp: fpOf(BYID[nid]) });
+      delete marks[nid].id;
+    });
     ids.forEach(function (id) {
       marks[id] = { status: "del", note: (marks[id] || {}).note || "", by: who.value, at: at,
                     fp: BYID[id] ? fpOf(BYID[id]) : null };
     });
     render();
-    for (const id of ids) { await putMark(id, marks[id]); }
+    for (const id of carry.concat(ids)) { await putMark(id, marks[id]); }
   }
   async function restore() {
     const u = undo; undo = null;
@@ -740,7 +759,14 @@ function askPass() {
       const cm = h.commute_min == null ? "?" : Math.round(h.commute_min) + "分";
       const cmClass = h.commute_min != null && h.commute_min <= 15 ? "good" : "";
       const chips = []
-        .concat(h.gone_date ? ['<span class="chip gone">' + (h.delisted ? "已下架 " : "本週沒抓到 ") + h.gone_date.slice(5) + '</span>'] : [])
+        .concat(h.gone_date ? [(function () {
+          const nw = CURFP[fpOf(h)];
+          if (nw && nw.id !== h.id) {   // 換新編號重新上架了,直接給新連結
+            return '<a class="chip new relink" href="' + nw.url + '" target="_blank" rel="noopener">已重新上架 → ' +
+              nw.price.toLocaleString() + "元</a>";
+          }
+          return '<span class="chip gone">' + (h.delisted ? "已下架 " : "本週沒抓到 ") + h.gone_date.slice(5) + "</span>";
+        })()] : [])
         .concat(relist ? ['<span class="chip new" title="同地址/坪數/樓層/格局的物件之前下架過' +
           (inh ? ",沿用當時的「" + (LABEL[inh.status] || "") + "」標記" : "") + '">重新上架</span>'] : [])
         .concat(NEW_IDS.has(h.id) && !h.gone_date && !relist ? ['<span class="chip new">新案</span>'] : [])
